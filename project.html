@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🌋 VR DOOMSCAPE - Survival Arena</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #ui { position: absolute; top: 10px; left: 10px; color: #ff4444; font-family: Arial; font-size: 24px; z-index: 100; }
+    </style>
+    <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+</head>
+<body>
+    <div id="ui">
+        <div>🧱 Blocks Placed: <span id="blocks">0</span>/10</div>
+        <div>☄️ Debris Destroyed: <span id="score">0</span></div>
+        <div>⏱️ Time: <span id="timer">60</span>s</div>
+        <button onclick="resetGame()" style="padding:10px;font-size:20px;">🔄 RESET</button>
+    </div>
+
+<a-scene background="color: #331100" fog="type: linear; color: #220000; near: 5; far: 30">
+    
+    <!-- DYNAMIC LIGHTING -->
+    <a-light type="ambient" color="#442211" intensity="0.3"></a-light>
+    <a-light type="directional" position="3 8 -5" color="#ff8844" intensity="1.2"></a-light>
+    <a-light type="point" position="0 5 -8" color="#ff4422" intensity="2"></a-light>
+    
+    <!-- PLAYER RIG -->
+    <a-entity id="rig" movement-controls="fly: true; speed: 0.1">
+        <a-camera id="camera" position="0 0 0" cursor="rayOrigin: mouse" 
+                  look-controls raycaster="objects: .interactable">
+        </a-camera>
+    </a-entity>
+    
+    <!-- LAVA FLOOD -->
+    <a-plane position="0 -2 0" rotation="-90 0 0" width="50" height="50" 
+             material="color: #ff3311; shader: flat; transparent: true; opacity: 0.9"
+             animation="property: position.y; to: 10 0 0; dur: 45000; loop: false">
+    </a-plane>
+    
+    <!-- RUINED CITY -->
+    <a-box position="-4 1 -6" color="#666666" scale="3 4 2" class="building destroyable"></a-box>
+    <a-box position="5 2 -4" color="#888888" scale="2.5 5 2.5" class="building destroyable"></a-box>
+    <a-box position="2 0.5 -10" color="#444444" scale="4 2 4" class="building destroyable"></a-box>
+    
+    <!-- FALLING DEBRIS (Dynamic spawn) -->
+    <a-entity id="debris-spawner"></a-entity>
+    
+    <!-- SAFE ZONE (Build here!) -->
+    <a-plane position="0 0 -2" rotation="-90 0 0" width="6" height="6" 
+             color="#00ff88" material="opacity: 0.3; transparent: true"
+             text="value: 🏗️ BUILD SAFE ZONE HERE!\nPlace 10 Blocks; color: black; align: center; width: 8">
+    </a-plane>
+    
+    <!-- HELICOPTER ESCAPE -->
+    <a-group id="helicopter" position="0 15 10" visible="false">
+        <a-box position="0 0 0" color="#444444" scale="3 1 6" material="metalness: 0.8"></a-box>
+        <a-cylinder position="1.2 0 0" color="#333" scale="0.3 0.8 0.3" rotation="-90 0 0"></a-cylinder>
+        <a-cylinder position="-1.2 0 0" color="#333" scale="0.3 0.8 0.3" rotation="-90 0 0"></a-cylinder>
+        <a-text value="🚁 RESCUE!" color="lime" scale="2 2 2" position="0 1 0"></a-text>
+    </a-group>
+    
+    <!-- PARTICLE EXPLOSIONS -->
+    <a-entity id="explosion-pool"></a-entity>
+    
+</a-scene>
+
+<script>
+    // GAME STATE
+    let blocksPlaced = 0;
+    let score = 0;
+    let timeLeft = 60;
+    let gameActive = true;
+    
+    // SPAWN FALLING DEBRIS
+    function spawnDebris() {
+        if (!gameActive) return;
+        
+        const debris = document.createElement('a-box');
+        debris.setAttribute('position', 
+            (Math.random()-0.5)*20 + ' ' + (8+Math.random()*5) + ' ' + (-15-Math.random()*10));
+        debris.setAttribute('scale', '0.4 0.4 0.4');
+        debris.setAttribute('color', '#aa4422');
+        debris.setAttribute('class', 'debris interactable');
+        debris.setAttribute('dynamic-body', 'shape: box; mass: 1');
+        
+        // Fall + spin
+        debris.setAttribute('animation__fall', 'property: position.y; to: -10; dur: 4000; easing: easeInQuad');
+        debris.setAttribute('animation__spin', 'property: rotation; to: 720 720 720; dur: 4000; loop: true');
+        
+        document.querySelector('a-scene').appendChild(debris);
+        
+        // Remove when hit ground
+        setTimeout(() => {
+            if (debris.parentNode) debris.parentNode.removeChild(debris);
+        }, 4500);
+    }
+    
+    // EXPLOSION EFFECT
+    function explode(position) {
+        for (let i = 0; i < 15; i++) {
+            const particle = document.createElement('a-sphere');
+            particle.setAttribute('position', position);
+            particle.setAttribute('radius', '0.05');
+            particle.setAttribute('color', '#ff8844');
+            particle.setAttribute('dynamic-body', 'mass: 0.1');
+            
+            // Random explosion velocity
+            const force = {x: (Math.random()-0.5)*0.3, y: Math.random()*0.4, z: (Math.random()-0.5)*0.3};
+            particle.setAttribute('velocity', force.x + ' ' + force.y + ' ' + force.z);
+            
+            document.querySelector('a-scene').appendChild(particle);
+            setTimeout(() => particle.parentNode.removeChild(particle), 2000);
+        }
+    }
+    
+    // BUILDING SYSTEM
+    function placeBlock(hit) {
+        if (blocksPlaced >= 10) return;
+        
+        const block = document.createElement('a-box');
+        block.setAttribute('position', hit.point.x + ' ' + (hit.point.y+0.6) + ' ' + hit.point.z);
+        block.setAttribute('scale', '0.8 0.8 0.8');
+        block.setAttribute('color', '#00ff88');
+        block.setAttribute('static-body', '');
+        block.setAttribute('class', 'safeblock');
+        
+        // Glow effect
+        block.setAttribute('animation__glow', 'property: material.emissiveIntensity; to: 0.8; dir: alternate; dur: 500; loop: true');
+        
+        document.querySelector('a-scene').appendChild(block);
+        blocksPlaced++;
+        document.getElementById('blocks').textContent = blocksPlaced;
+        
+        checkWin();
+    }
+    
+    // WIN CONDITION
+    function checkWin() {
+        if (blocksPlaced >= 10 && score >= 15 && timeLeft > 0) {
+            gameActive = false;
+            document.getElementById('helicopter').setAttribute('visible', 'true');
+            document.getElementById('helicopter').setAttribute('animation', 
+                'property: position; to: 0 5 -2; dur: 5000; easing: easeInOutQuad');
+            alert('🚁 RESCUED! You survived the apocalypse!');
+        }
+    }
+    
+    // EVENT HANDLERS
+    document.querySelector('a-scene').addEventListener('click', (evt) => {
+        const hit = evt.detail.intersection;
+        if (!hit || !gameActive) return;
+        
+        const target = hit.object.el;
+        
+        // Shoot debris
+        if (target.classList.contains('debris')) {
+            explode(hit.point);
+            target.parentNode.removeChild(target);
+            score++;
+            document.getElementById('score').textContent = score;
+        }
+        
+        // Build safe zone
+        if (Math.abs(hit.point.x) < 3 && Math.abs(hit.point.z + 2) < 3 && hit.point.y < 1) {
+            placeBlock(hit);
+        }
+        
+        // Destroy buildings
+        if (target.classList.contains('building')) {
+            explode(hit.point);
+            target.setAttribute('animation', 'property: scale; to: 0 0 0; dur: 1500');
+            setTimeout(() => target.parentNode.removeChild(target), 1500);
+            score += 5;
+            document.getElementById('score').textContent = score;
+        }
+    });
+    
+    // GAME LOOP
+    setInterval(spawnDebris, 1500);
+    setInterval(() => {
+        if (gameActive && timeLeft > 0) {
+            timeLeft--;
+            document.getElementById('timer').textContent = timeLeft;
+            if (timeLeft <= 0) alert('💀 GAME OVER - Lava consumed everything!');
+        }
+    }, 1000);
+    
+    function resetGame() {
+        location.reload();
+    }
+    
+    // Physics system
+    AFRAME.registerPhysicsSystem();
+</script>
+</body>
+</html>
